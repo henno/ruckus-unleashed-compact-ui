@@ -4,10 +4,10 @@ A Tampermonkey userscript that replaces the Ruckus Unleashed dashboard with a de
 
 ## Features
 
-- **Access points:** status, name, description, model, IP, MAC, client count, uplink speed, uplink errors and drops, traffic, uptime (negative for offline APs), last reboot reason. Sortable columns.
-- **Expandable AP details:** network, device, reboot counters, radios per SSID and band, LAN ports, uplink interface, recent events. AP name and description are editable here.
-- **Clients:** name, IP, MAC, device type, SSID, AP, band and channel, signal, connected time. Click an AP to show only its clients.
-- **WLANs:** enable/disable toggle, client count, security, VLAN. Blocked clients list with unblock.
+- **Access points:** status, name, description, model, IP, management VLAN, MAC, client count, uplink speed, uplink errors and drops, traffic, uptime (negative for offline APs), last reboot reason. Sortable columns.
+- **Expandable AP details:** network, device, reboot counters, radios per SSID and band (with VLAN), LAN ports, uplink interface, recent events. AP name and description are editable here.
+- **Clients:** name, IP, MAC, device type, SSID, VLAN, AP, band and channel, signal, connected time. Click an AP to show only its clients.
+- **WLANs:** enable/disable toggle, client count, security, VLAN (dynamic VLAN marked). Blocked clients list with unblock.
 - **Events:** timeline with date separators, severity dots, separate AP column, shortened messages.
 - **Actions:** restart AP, disconnect client, block/unblock client, toggle WLAN (with confirmations).
 - **Global filter** across all tables, change highlighting, toasts when APs go down/up or clients join/leave, tab title shows offline AP count.

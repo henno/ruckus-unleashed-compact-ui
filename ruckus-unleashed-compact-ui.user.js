@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ruckus Unleashed Compact UI
 // @namespace    https://github.com/henno/ruckus-unleashed-compact-ui
-// @version      1.12.0
+// @version      1.13.0
 // @description  Dense single-screen table UI for Ruckus Unleashed: APs, clients, WLANs and events at once.
 // @author       Henno Täht
 // @license      MIT
@@ -104,7 +104,7 @@
           mac: c.mac, ip: c.ip, host: c.hostname && c.hostname !== c.mac ? c.hostname : '',
           os: c.dvcinfo, type: c.dvctype, model: c.model, ssid: c.ssid, user: c.user,
           apMac: c.ap, ap: apByMac.get(c.ap)?.name || c['ap-name'], band: c['radio-band'], ch: +c.channel,
-          rssi: +c.rssi, health: c['display-health-level'], since: +c['first-assoc'], vlan: c.vlan,
+          rssi: +c.rssi, health: c['display-health-level'], since: +c['first-assoc'], vlan: +c.vlan || '',
           enc: c.encryption, blocked: c.blocked === '1',
         };
       });
@@ -113,7 +113,7 @@
       const wlans = [...root.querySelectorAll(':scope > wlan')].map((el) => {
         const w = attrs(el);
         const c = wlConf.find((x) => x.ssid === w.ssid || x.name === w.ssid) || {};
-        return { id: c.id || w.id, name: c.name || w.ssid, ssid: w.ssid, clients: +w['assoc-stas'] || 0, enabled: c['enable-type'] ? c['enable-type'] === '0' : w.state === 'enabled', enc: c.encryption, auth: c.authentication, vlan: c['vlan-id'], guest: c['is-guest'] === 'true', hidden: c['close-system'] === 'true' };
+        return { id: c.id || w.id, name: c.name || w.ssid, ssid: w.ssid, clients: +w['assoc-stas'] || 0, enabled: c['enable-type'] ? c['enable-type'] === '0' : w.state === 'enabled', enc: c.encryption, auth: c.authentication, vlan: c['vlan-id'], guest: c['is-guest'] === 'true', hidden: c['close-system'] === 'true', dvlan: c.dvlan === 'enabled' };
       });
       // WLANs present in config but missing from stats (e.g. disabled)
       for (const c of wlConf) if (!wlans.some((w) => w.id === c.id)) wlans.push({ id: c.id, name: c.name, ssid: c.ssid, clients: 0, enabled: c['enable-type'] === '0', enc: c.encryption, auth: c.authentication, vlan: c['vlan-id'], guest: c['is-guest'] === 'true', hidden: c['close-system'] === 'true' });
@@ -146,7 +146,7 @@
       cpu: +a.cpu_util || 0, mem: a.mem_total ? Math.round((1 - a.mem_avail / a.mem_total) * 100) : 0,
       tx: +a.sta_tx_byte || 0, rx: +a.sta_rx_byte || 0, mesh: a['mesh-enabled'] === 'true' ? (a['mesh-depth'] > 0 ? `mesh ${a['mesh-depth']}` : 'root') : '',
       fw: a['firmware-version'], serial: a['serial-number'], reboot: a['last-reboot-reason'] || '', temp: a['current-temperature'] !== 'unavailable' ? a['current-temperature'] : '',
-      rogue: +a['num-rogue'] || 0, clients: 0,
+      rogue: +a['num-rogue'] || 0, clients: 0, vlan: +(a['mgmt-vlan-id'] || c['mgmt-vlan-id']) || '',
       raw: a, conf: c,
       vaps: [...el.querySelectorAll(':scope > vap')].map(attrs),
       lan: [...el.querySelectorAll(':scope > lan-port')].map(attrs),
@@ -394,7 +394,7 @@
     const off = state.aps.filter((a) => !a.state).length;
     $('#apCnt').innerHTML = `${state.aps.length - off}/${state.aps.length}${off ? ` <span style="color:var(--bad)">· ${off} offline</span>` : ''}`;
     $('#apT').innerHTML = `<table><thead><tr>
-      ${th('ap', 'state', '')}${th('ap', 'name', 'Name')}${th('ap', 'desc', 'Description')}${th('ap', 'model', 'Model')}${th('ap', 'ip', 'IP')}${th('ap', 'mac', 'MAC')}
+      ${th('ap', 'state', '')}${th('ap', 'name', 'Name')}${th('ap', 'desc', 'Description')}${th('ap', 'model', 'Model')}${th('ap', 'ip', 'IP')}${th('ap', 'vlan', 'VLAN', 'num')}${th('ap', 'mac', 'MAC')}
       ${th('ap', 'clients', 'Cl', 'num')}${th('ap', 'upSpeed', 'Uplink', 'num')}${th('ap', 'upErr', 'Errors', 'num')}${th('ap', 'upDrop', 'Drop', 'num')}
       ${th('ap', 'tx', 'TX', 'num')}${th('ap', 'rx', 'RX', 'num')}${th('ap', 'uptime', 'Uptime', 'num')}${th('ap', 'reboot', 'Last reboot')}<th></th>
       </tr></thead><tbody>${list.map((a) => `
@@ -404,6 +404,7 @@
         <td class="mut desc" title="${esc(a.desc)}">${esc(a.desc)}</td>
         <td>${esc(a.model)}</td>
         <td class="cp" data-copy="${esc(a.ip)}">${esc(a.ip)}</td>
+        <td class="num" title="Management VLAN">${esc(a.vlan)}</td>
         <td class="cp mut" data-copy="${esc(a.mac)}">${esc(a.mac)}</td>
         <td class="num">${a.state ? `<a class="cp" data-apf="${a.mac}" title="Show this AP's clients">${a.clients}</a>` : '–'}</td>
         <td class="num" title="${esc(a.upIf)}">${a.state && a.upSpeed ? `<span class="${a.upSpeed < 1000 || a.upDuplex === 'half' ? 'warnc' : ''}">${a.upSpeed >= 1000 ? a.upSpeed / 1000 + ' G' : a.upSpeed + ' M'}${a.upDuplex === 'half' ? ' half' : ''}</span>` : ''}</td>
@@ -435,8 +436,8 @@
       ['Watchdog', boot('watchdog', 1)], ['Panic', boot('kernel-panic', 1)], ['Last', `<span title="${g('last-reboot-details')}">${g('last-reboot-reason')}</span>`], ['Rejoin', g('last-rejoin-reason')]]);
 
     const vaps = [...a.vaps].sort((x, y) => x.ssid.localeCompare(y.ssid) || x['radio-band'].localeCompare(y['radio-band']));
-    const radios = vaps.length ? `<div><h4>Radios</h4><table><tr><th>SSID</th><th>Band</th><th class="c">Channel</th><th class="c">Cl</th><th class="c">TX</th><th class="c">RX</th><th class="c">Errors</th><th>BSSID</th></tr>
-      ${vaps.map((v) => `<tr><td>${esc(v.ssid)}</td><td><span class="tag ${v['radio-band'] === '5g' ? 'b5' : 'b24'}">${v['radio-band'] === '5g' ? '5 GHz' : '2.4 GHz'}</span></td><td class="c">${esc(v.channel)}</td>
+    const radios = vaps.length ? `<div><h4>Radios</h4><table><tr><th>SSID</th><th>Band</th><th class="c">Channel</th><th class="c">VLAN</th><th class="c">Cl</th><th class="c">TX</th><th class="c">RX</th><th class="c">Errors</th><th>BSSID</th></tr>
+      ${vaps.map((v) => `<tr><td>${esc(v.ssid)}</td><td><span class="tag ${v['radio-band'] === '5g' ? 'b5' : 'b24'}">${v['radio-band'] === '5g' ? '5 GHz' : '2.4 GHz'}</span></td><td class="c">${esc(v.channel)}</td><td class="c">${esc(state.wlans.find((w) => w.ssid === v.ssid)?.vlan || '')}</td>
         <td class="c">${v['vap-up'] === 'Up' ? n(v['assoc-stas'] || v['num-sta']) : '<span class="bad">down</span>'}</td><td class="c">${bytes(+v['tx-bytes'])}</td><td class="c">${bytes(+v['rx-bytes'])}</td>
         <td class="c">${n((+v['tx-errors'] || 0) + (+v['rx-errors'] || 0))}</td><td class="mut cp" data-copy="${esc(v.bssid)}">${esc(v.bssid)}</td></tr>`).join('')}</table></div>` : '';
 
@@ -452,7 +453,7 @@
     const ev = state.events.filter((e) => e.ap === a.mac).slice(0, 6);
     const events = ev.length ? `<div class="ev"><h4>Events</h4><table>${ev.map((e) => `<tr><td>${clock(e.time)}</td><td class="sev${e.sev}">${esc(e.msg)}</td></tr>`).join('')}</table></div>` : '';
 
-    return `<tr class="det"><td colspan="16"><div class="ins">${net}${dev}${boots}<div></div><div class="full">${radios}${ports}${ifs}</div>${events}</div></td></tr>`;
+    return `<tr class="det"><td colspan="17"><div class="ins">${net}${dev}${boots}<div></div><div class="full">${radios}${ports}${ifs}</div>${events}</div></td></tr>`;
   }
 
   function renderUpBase() {
@@ -476,7 +477,7 @@
     $('#clCnt').textContent = list.length === state.clients.length ? state.clients.length : `${list.length}/${state.clients.length}`;
     $('#clApF').innerHTML = apf ? `<a data-apf="">✕ AP: ${esc(apf.name)}</a>` : '';
     $('#clT').innerHTML = `<table><thead><tr>
-      ${th('cl', 'host', 'Name')}${th('cl', 'ip', 'IP')}${th('cl', 'mac', 'MAC')}${th('cl', 'os', 'Device')}${th('cl', 'ssid', 'SSID')}${th('cl', 'ap', 'AP')}
+      ${th('cl', 'host', 'Name')}${th('cl', 'ip', 'IP')}${th('cl', 'mac', 'MAC')}${th('cl', 'os', 'Device')}${th('cl', 'ssid', 'SSID')}${th('cl', 'vlan', 'VLAN', 'num')}${th('cl', 'ap', 'AP')}
       ${th('cl', 'band', 'Band')}${th('cl', 'rssi', 'Signal')}${th('cl', 'since', 'Connected', 'num')}<th></th>
       </tr></thead><tbody>${list.map((c) => `
       <tr class="${rowFlash('cl' + c.mac, c.apMac + c.ch)}">
@@ -484,7 +485,8 @@
         <td class="cp" data-copy="${esc(c.ip)}">${esc(c.ip)}</td>
         <td class="cp mut" data-copy="${esc(c.mac)}">${esc(c.mac)}</td>
         <td title="${esc(c.model)}">${esc(c.os)}<span class="mut"> ${esc(c.type)}</span></td>
-        <td>${esc(c.ssid)}${c.vlan && c.vlan !== '1' ? `<span class="mut"> v${esc(c.vlan)}</span>` : ''}</td>
+        <td>${esc(c.ssid)}</td>
+        <td class="num">${esc(c.vlan)}</td>
         <td><a class="cp" data-apf="${c.apMac}">${esc(c.ap)}</a></td>
         <td><span class="tag ${c.band === '5g' ? 'b5' : 'b24'}">${c.band === '5g' ? '5G' : '2.4'}</span> <span class="mut">ch${c.ch}</span></td>
         <td>${rssiBar(c.rssi)}</td>
@@ -497,7 +499,7 @@
     $('#wlT').innerHTML = `<table><thead><tr><th></th><th>SSID</th><th class="num">Cl</th><th>Security</th><th class="num">VLAN</th><th></th></tr></thead><tbody>${state.wlans.map((w) => `
       <tr><td><span class="sw ${w.enabled ? 'on' : ''}" data-wlan="${esc(w.id)}" title="${w.enabled ? 'Disable' : 'Enable'}"></span></td>
       <td><a class="cp" data-q="${esc(w.ssid)}">${esc(w.ssid)}</a>${w.guest ? ' <span class="tag">guest</span>' : ''}${w.hidden ? ' <span class="tag">hidden</span>' : ''}</td>
-      <td class="num">${w.clients}</td><td class="mut">${esc(w.auth)} · ${esc(w.enc)}</td><td class="num">${esc(w.vlan)}</td><td></td></tr>`).join('')}</tbody></table>${state.blocked.length ? `
+      <td class="num">${w.clients}</td><td class="mut">${esc(w.auth)} · ${esc(w.enc)}</td><td class="num">${esc(w.vlan)}${w.dvlan ? ' <span class="tag" title="Dynamic VLAN from RADIUS">dyn</span>' : ''}</td><td></td></tr>`).join('')}</tbody></table>${state.blocked.length ? `
       <table><thead><tr><th>⛔ Blocked</th><th></th><th></th></tr></thead><tbody>${state.blocked.map((b) => `
       <tr><td class="cp" data-copy="${esc(b.mac)}">${esc(b.mac)}</td><td class="mut">${esc(b.host)}</td><td class="act"><button data-do="unblock" data-mac="${esc(b.mac)}" title="Remove block">Unblock</button></td></tr>`).join('')}</tbody></table>` : ''}`;
   }
@@ -564,10 +566,10 @@
   // ---------- CSV ----------
   function csv(kind) {
     const rows = kind === 'ap'
-      ? [['Name', 'Description', 'Model', 'IP', 'MAC', 'State', 'Clients', '2.4 channel', '5G channel', 'Uptime (s)', 'Firmware', 'Serial'],
-        ...sortBy(state.aps.filter(matches), 'ap').map((a) => [a.name, a.desc, a.model, a.ip, a.mac, a.state ? 'up' : 'down', a.clients, a.ch24, a.ch5, a.uptime, a.fw, a.serial])]
-      : [['Name', 'IP', 'MAC', 'OS', 'Type', 'SSID', 'AP', 'Band', 'Channel', 'RSSI', 'Connected since'],
-        ...sortBy(state.clients.filter(matches), 'cl').map((c) => [c.host, c.ip, c.mac, c.os, c.type, c.ssid, c.ap, c.band, c.ch, c.rssi, new Date(c.since * 1000).toISOString()])];
+      ? [['Name', 'Description', 'Model', 'IP', 'MAC', 'VLAN', 'State', 'Clients', '2.4 channel', '5G channel', 'Uptime (s)', 'Firmware', 'Serial'],
+        ...sortBy(state.aps.filter(matches), 'ap').map((a) => [a.name, a.desc, a.model, a.ip, a.mac, a.vlan, a.state ? 'up' : 'down', a.clients, a.ch24, a.ch5, a.uptime, a.fw, a.serial])]
+      : [['Name', 'IP', 'MAC', 'OS', 'Type', 'SSID', 'VLAN', 'AP', 'Band', 'Channel', 'RSSI', 'Connected since'],
+        ...sortBy(state.clients.filter(matches), 'cl').map((c) => [c.host, c.ip, c.mac, c.os, c.type, c.ssid, c.vlan, c.ap, c.band, c.ch, c.rssi, new Date(c.since * 1000).toISOString()])];
     const text = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv' }));
