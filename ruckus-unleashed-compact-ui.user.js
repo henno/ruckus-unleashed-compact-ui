@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ruckus Unleashed Compact UI
 // @namespace    https://github.com/henno/ruckus-unleashed-compact-ui
-// @version      1.11.0
+// @version      1.12.0
 // @description  Dense single-screen table UI for Ruckus Unleashed: APs, clients, WLANs and events at once.
 // @author       Henno Täht
 // @license      MIT
@@ -19,21 +19,21 @@
   'use strict';
 
   if (window.__tgUnleashed) return;
-  // @match on üldine, seega käivitu ainult päris Unleashedi lehel
+  // @match is broad, so run only on a real Unleashed page
   if (!/unleashed/i.test(document.title) || typeof window.csfrToken !== 'string') return;
   window.__tgUnleashed = true;
 
-  // ---------- konfiguratsioon ----------
+  // ---------- configuration ----------
   const LS = 'tgUnleashed.';
   const store = {
     get(k, d) { try { const v = localStorage.getItem(LS + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-    set(k, v) { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch { /* privaatrežiim */ } },
+    set(k, v) { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch { /* private mode */ } },
   };
   const state = {
     interval: store.get('interval', 15),
     filter: '',
-    apFilter: null, // AP MAC, mille kliente näidatakse
-    expanded: new Set(store.get('expanded', [])), // lahti klõpsatud AP-d
+    apFilter: null, // AP MAC whose clients are shown
+    expanded: new Set(store.get('expanded', [])), // expanded AP rows
     sort: store.get('sort', { ap: ['state', 1], cl: ['ap', 1], ev: ['time', -1] }),
     blocked: [], acl: {}, upBase: store.get('upBase', { at: 0, aps: {} }), aps: [], apsConf: new Map(), clients: [], wlans: [], wlanConf: [], events: [], sys: {},
     prev: { aps: new Map(), clients: new Map() },
@@ -50,10 +50,10 @@
       body,
     });
     const text = await r.text();
-    if (!r.ok || !text.includes('<ajax-response')) throw new Error(r.status === 200 ? 'Sessioon aegus' : `HTTP ${r.status}`);
+    if (!r.ok || !text.includes('<ajax-response')) throw new Error(r.status === 200 ? 'Session expired' : `HTTP ${r.status}`);
     const doc = new DOMParser().parseFromString(text, 'text/xml');
     const err = doc.querySelector('response[type="error"], error, xmsg[type="-1"]');
-    if (err && action !== 'getstat' && action !== 'getconf') throw new Error(err.getAttribute('lmsg') || err.getAttribute('msg') || err.textContent || 'Viga');
+    if (err && action !== 'getstat' && action !== 'getconf') throw new Error(err.getAttribute('lmsg') || err.getAttribute('msg') || err.textContent || 'Error');
     return doc;
   }
   const stat = (comp, inner) => ajax('cmdstat', 'getstat', comp, inner, "caller='unleashed_web'");
@@ -64,14 +64,14 @@
     reboot: (mac) => ajax('cmdstat', 'docmd', 'stamgr', `<xcmd cmd='reset' ap='${mac}' tag='ap' checkAbility='2'/>`, "xcmd='reset' checkAbility='2'"),
     kick: (mac) => ajax('cmdstat', 'docmd', 'stamgr', `<xcmd cmd='delete' tag='client' client='${mac}'/>`, "xcmd='delete' checkAbility='2'"),
     block: (mac) => ajax('cmdstat', 'docmd', 'stamgr', `<xcmd check-ability='10' tag='client' acl-id='1' client='${mac}' cmd='block'><client client='${mac}' acl-id='1' hostname=''></client></xcmd>`, "xcmd='block' checkAbility='10'"),
-    // blokeeringu eemaldamiseks salvestatakse ACL „System“ ilma selle seadmeta
-    // IS_PARTIAL muudab ainult antud välja, ülejäänud AP seadistus jääb puutumata
+    // IS_PARTIAL changes only the given field, the rest of the AP config is untouched
     apSet: (mac, field, value) => {
       const c = state.apsConf.get(mac);
-      if (!c) return Promise.reject(new Error('AP seadistust ei leitud'));
+      if (!c) return Promise.reject(new Error('AP configuration not found'));
       return ajax('conf', 'updobj', 'ap-list', `<ap id='${esc(c.id)}' mac='${esc(mac)}' ${field}='${esc(value)}' IS_PARTIAL='true'/>`)
         .then(() => { c[field] = value; });
     },
+    // unblocking saves the System ACL without this device
     unblock: (mac) => {
       const keep = state.blocked.filter((b) => b.mac !== mac).map((b) => `<deny mac='${esc(b.mac)}' type='single' hostname='${esc(b.host)}'/>`).join('');
       return ajax('conf', 'updobj', 'acl-list', `<acl id='${esc(state.acl.id)}' name='System' description='${esc(state.acl.description)}' default-mode='${esc(state.acl['default-mode'])}' EDITABLE='false'>${keep}</acl>`);
@@ -115,7 +115,7 @@
         const c = wlConf.find((x) => x.ssid === w.ssid || x.name === w.ssid) || {};
         return { id: c.id || w.id, name: c.name || w.ssid, ssid: w.ssid, clients: +w['assoc-stas'] || 0, enabled: c['enable-type'] ? c['enable-type'] === '0' : w.state === 'enabled', enc: c.encryption, auth: c.authentication, vlan: c['vlan-id'], guest: c['is-guest'] === 'true', hidden: c['close-system'] === 'true' };
       });
-      // konfiguratsioonis olevad, aga statistikas puuduvad (nt keelatud) WLAN-id
+      // WLANs present in config but missing from stats (e.g. disabled)
       for (const c of wlConf) if (!wlans.some((w) => w.id === c.id)) wlans.push({ id: c.id, name: c.name, ssid: c.ssid, clients: 0, enabled: c['enable-type'] === '0', enc: c.encryption, auth: c.authentication, vlan: c['vlan-id'], guest: c['is-guest'] === 'true', hidden: c['close-system'] === 'true' });
 
       const sy = sys.querySelector('sysinfo'); const id = sys.querySelector('identity'); const mg = sys.querySelector('mgmt-ip');
@@ -154,7 +154,7 @@
       ifs: [...el.querySelectorAll(':scope > if')].map(attrs).filter((i) => /^(eth|br)\d/.test(i['if-name'])),
       neighbors: [...el.querySelectorAll(':scope > neighbor-ap')].map(attrs),
     };
-    // uplink = esimene töötav ethX liides; kiirus ja dupleks LAN-pordi olekust
+    // uplink = first working ethX interface; speed and duplex from LAN port status
     const up = ap.ifs.find((i) => i['if-operStatus'] === '1' && /^eth/.test(i['if-name']));
     const lanUp = ap.lan.find((l) => (l.Physical || '').trim().startsWith('Up'));
     const dup = /(full|half)/i.exec(lanUp?.Physical || '')?.[1]?.toLowerCase() || '';
@@ -162,42 +162,42 @@
     ap.upDuplex = dup;
     ap.upErrRaw = up ? (+up['if-inErrors'] || 0) + (+up['if-outErrors'] || 0) : 0;
     ap.upDropRaw = up ? (+up['if-inDiscards'] || 0) + (+up['if-outDiscards'] || 0) : 0;
-    // nullimise järel näidatakse juurdekasvu; kui AP on vahepeal taaskäivitunud, on seade loendurid ise nullinud
+    // after a reset only the increase is shown; if the AP has rebooted since, the device already zeroed its counters
     const b = state.upBase.at && state.upBase.aps[ap.mac];
     const rebooted = b && ap.uptime < (Date.now() / 1000 - state.upBase.at);
     ap.upErr = b && !rebooted ? Math.max(0, ap.upErrRaw - b.err) : ap.upErrRaw;
     ap.upDrop = b && !rebooted ? Math.max(0, ap.upDropRaw - b.drop) : ap.upDropRaw;
     ap.upIf = up ? up['if-name'] : '';
-    // maas oleva AP „üleval“ on negatiivne: kaua on ta ära olnud (sorteerub ka õigesti)
+    // an offline AP's uptime is negative: how long it has been down (also sorts correctly)
     if (!ap.state) ap.uptime = ap.lastSeen ? -Math.round(Date.now() / 1000 - ap.lastSeen) : 0;
     return ap;
   }
 
-  // ---------- muudatuste teavitused ----------
+  // ---------- change notifications ----------
   let first = true;
   function notifyChanges(aps, clients) {
     if (!first) {
       for (const a of aps) {
         const p = state.prev.aps.get(a.mac);
-        if (p != null && p !== a.state) toast(a.state ? `▲ ${a.name} tuli tagasi` : `▼ ${a.name} kadus ära`, a.state ? 'ok' : 'bad');
+        if (p != null && p !== a.state) toast(a.state ? `▲ ${a.name} is back online` : `▼ ${a.name} went offline`, a.state ? 'ok' : 'bad');
       }
       const now = new Set(clients.map((c) => c.mac));
       const joined = clients.filter((c) => !state.prev.clients.has(c.mac));
       const left = [...state.prev.clients.keys()].filter((m) => !now.has(m));
-      if (joined.length) toast(`+${joined.length} klient${joined.length > 1 ? 'i' : ''}: ${joined.slice(0, 3).map((c) => c.host || c.ip || c.mac).join(', ')}`, 'info');
-      if (left.length) toast(`−${left.length} klient${left.length > 1 ? 'i' : ''} lahkus`, 'muted');
+      if (joined.length) toast(`+${joined.length} client${joined.length > 1 ? 's' : ''}: ${joined.slice(0, 3).map((c) => c.host || c.ip || c.mac).join(', ')}`, 'info');
+      if (left.length) toast(`−${left.length} client${left.length > 1 ? 's' : ''} left`, 'muted');
     }
     first = false;
     state.prev.aps = new Map(aps.map((a) => [a.mac, a.state]));
     state.prev.clients = new Map(clients.map((c) => [c.mac, 1]));
   }
 
-  // ---------- abifunktsioonid ----------
+  // ---------- helpers ----------
   function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
   function dur(s) {
     if (!s || s < 0) return '–';
     const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
-    return d ? `${d}p ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
   }
   function ago(t) { return t ? dur(Date.now() / 1000 - t) : '–'; }
   function bytes(n) { if (!n) return '–'; const u = ['B', 'K', 'M', 'G', 'T']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return n.toFixed(n < 10 && i ? 1 : 0) + u[i]; }
@@ -213,13 +213,13 @@
     return [...list].sort((a, b) => {
       let x = a[k], y = b[k];
       if (k === 'ip') { x = ipNum(x); y = ipNum(y); }
-      if (typeof x === 'string' || typeof y === 'string') return dir * String(x ?? '').localeCompare(String(y ?? ''), 'et', { numeric: true });
+      if (typeof x === 'string' || typeof y === 'string') return dir * String(x ?? '').localeCompare(String(y ?? ''), undefined, { numeric: true });
       return dir * ((x ?? 0) - (y ?? 0));
     });
   }
   function ipNum(ip) { return (ip || '').split('.').reduce((n, p) => n * 256 + (+p || 0), 0); }
 
-  // ---------- kasutajaliides ----------
+  // ---------- user interface ----------
   const font = document.createElement('link');
   font.rel = 'stylesheet';
   font.href = 'https://fonts.googleapis.com/css2?family=Pathway+Extreme:opsz,wdth,wght@8..12,75..100,100..900&family=Pathway+Gothic+One&display=swap';
@@ -322,7 +322,7 @@
   `;
   document.head.appendChild(css);
 
-  const FONTS = { ext200: 'Extreme õhuke', ext300: 'Extreme kerge', ext400: 'Extreme tavaline', gothic: 'Gothic One' };
+  const FONTS = { ext200: 'Extreme thin', ext300: 'Extreme light', ext400: 'Extreme regular', gothic: 'Gothic One' };
   const root = document.createElement('div');
   root.id = 'tgU';
   root.innerHTML = `
@@ -331,34 +331,34 @@
       <span id="tgSys" class="mut"></span>
       <div class="kpi" id="tgKpi"></div>
       <span class="grow"></span>
-      <input type="search" id="tgQ" placeholder="Filtreeri kõike…  ( / )" autocomplete="off">
-      <span class="mut">värskenda</span>
-      <select id="tgInt">${[5, 10, 15, 30, 60, 0].map((s) => `<option value="${s}">${s ? s + ' s' : 'käsitsi'}</option>`).join('')}</select>
-      <button id="tgRef" title="Värskenda (r)">↻</button>
-      <button id="tgTheme" title="Teema (t)"></button>
-      <select id="tgSize" title="Teksti suurus">${[9, 10, 11, 12, 13, 15].map((z) => `<option value="${z}">${z} px</option>`).join('')}</select>
+      <input type="search" id="tgQ" placeholder="Filter everything…  ( / )" autocomplete="off">
+      <span class="mut">refresh</span>
+      <select id="tgInt">${[5, 10, 15, 30, 60, 0].map((s) => `<option value="${s}">${s ? s + ' s' : 'manual'}</option>`).join('')}</select>
+      <button id="tgRef" title="Refresh (r)">↻</button>
+      <button id="tgTheme" title="Theme (t)"></button>
+      <select id="tgSize" title="Text size">${[9, 10, 11, 12, 13, 15].map((z) => `<option value="${z}">${z} px</option>`).join('')}</select>
       <select id="tgFont" title="Font">${Object.entries(FONTS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
       <span id="tgStat"></span>
-      <span class="mut" title="/ otsi · r värskenda · t teema · Esc tühjenda filtrid ja sulge detailid">⌨</span>
-      <button id="tgOld" title="Ava Ruckusi originaalvaade">Originaal-UI</button>
+      <span class="mut" title="/ search · r refresh · t theme · Esc clear filters and close details">⌨</span>
+      <button id="tgOld" title="Open the original Ruckus view">Original UI</button>
     </header>
     <main>
-      <section id="secAp"><h2><b>Pääsupunktid</b><span id="apCnt"></span><span class="grow"></span><span id="upBase"></span><a data-csv="ap">CSV</a></h2><div class="scroll" id="apT"></div></section>
-      <section id="secCl"><h2><b>Kliendid</b><span id="clCnt"></span><span id="clApF"></span><span class="grow"></span><a data-csv="cl">CSV</a></h2><div class="scroll" id="clT"></div></section>
+      <section id="secAp"><h2><b>Access points</b><span id="apCnt"></span><span class="grow"></span><span id="upBase"></span><a data-csv="ap">CSV</a></h2><div class="scroll" id="apT"></div></section>
+      <section id="secCl"><h2><b>Clients</b><span id="clCnt"></span><span id="clApF"></span><span class="grow"></span><a data-csv="cl">CSV</a></h2><div class="scroll" id="clT"></div></section>
       <div id="secRight">
-        <section><h2><b>WiFi-võrgud</b></h2><div id="wlT"></div></section>
-        <section><h2><b>Sündmused</b><span id="evCnt"></span></h2><div class="scroll" id="evT"></div></section>
+        <section><h2><b>WLANs</b></h2><div id="wlT"></div></section>
+        <section><h2><b>Events</b><span id="evCnt"></span></h2><div class="scroll" id="evT"></div></section>
       </div>
     </main>`;
   document.body.appendChild(root);
   const toasts = document.createElement('div'); toasts.id = 'tgToasts'; document.body.appendChild(toasts);
-  const back = document.createElement('button'); back.id = 'tgClassic'; back.textContent = '← Tihe vaade'; document.body.appendChild(back);
-  // originaal-UI jääb taustale alles, et Ruckusi enda sessiooni hoidmine töötaks edasi
+  const back = document.createElement('button'); back.id = 'tgClassic'; back.textContent = '← Compact view'; document.body.appendChild(back);
+  // the original UI stays in the background so Ruckus keeps its own session alive
   document.documentElement.style.overflow = 'hidden';
 
   const $ = (s) => root.querySelector(s);
 
-  const THEMES = { auto: '◐ auto', light: '☀ hele', dark: '☾ tume' };
+  const THEMES = { auto: '◐ auto', light: '☀ light', dark: '☾ dark' };
   function applyTheme(t) {
     if (t === 'auto') delete document.documentElement.dataset.tgTheme; else document.documentElement.dataset.tgTheme = t;
     $('#tgTheme').textContent = THEMES[t];
@@ -392,11 +392,11 @@
   function renderAps() {
     const list = sortBy(state.aps.filter(matches), 'ap');
     const off = state.aps.filter((a) => !a.state).length;
-    $('#apCnt').innerHTML = `${state.aps.length - off}/${state.aps.length}${off ? ` <span style="color:var(--bad)">· ${off} maas</span>` : ''}`;
+    $('#apCnt').innerHTML = `${state.aps.length - off}/${state.aps.length}${off ? ` <span style="color:var(--bad)">· ${off} offline</span>` : ''}`;
     $('#apT').innerHTML = `<table><thead><tr>
-      ${th('ap', 'state', '')}${th('ap', 'name', 'Nimi')}${th('ap', 'desc', 'Kirjeldus')}${th('ap', 'model', 'Mudel')}${th('ap', 'ip', 'IP')}${th('ap', 'mac', 'MAC')}
-      ${th('ap', 'clients', 'Kl', 'num')}${th('ap', 'upSpeed', 'Uplink', 'num')}${th('ap', 'upErr', 'Vead', 'num')}${th('ap', 'upDrop', 'Drop', 'num')}
-      ${th('ap', 'tx', 'TX', 'num')}${th('ap', 'rx', 'RX', 'num')}${th('ap', 'uptime', 'Üleval', 'num')}${th('ap', 'reboot', 'Viimane taaskäivitus')}<th></th>
+      ${th('ap', 'state', '')}${th('ap', 'name', 'Name')}${th('ap', 'desc', 'Description')}${th('ap', 'model', 'Model')}${th('ap', 'ip', 'IP')}${th('ap', 'mac', 'MAC')}
+      ${th('ap', 'clients', 'Cl', 'num')}${th('ap', 'upSpeed', 'Uplink', 'num')}${th('ap', 'upErr', 'Errors', 'num')}${th('ap', 'upDrop', 'Drop', 'num')}
+      ${th('ap', 'tx', 'TX', 'num')}${th('ap', 'rx', 'RX', 'num')}${th('ap', 'uptime', 'Uptime', 'num')}${th('ap', 'reboot', 'Last reboot')}<th></th>
       </tr></thead><tbody>${list.map((a) => `
       <tr data-ap="${a.mac}" class="${a.state ? '' : 'off'}${state.expanded.has(a.mac) ? ' open' : ''}${state.apFilter === a.mac ? ' sel' : ''}${rowFlash('ap' + a.mac, a.state + '|' + a.clients + '|' + a.ch24 + '|' + a.ch5)}">
         <td><span class="dot ${a.state ? 'ok' : 'bad'}"></span></td>
@@ -405,15 +405,15 @@
         <td>${esc(a.model)}</td>
         <td class="cp" data-copy="${esc(a.ip)}">${esc(a.ip)}</td>
         <td class="cp mut" data-copy="${esc(a.mac)}">${esc(a.mac)}</td>
-        <td class="num">${a.state ? `<a class="cp" data-apf="${a.mac}" title="Näita selle AP kliente">${a.clients}</a>` : '–'}</td>
+        <td class="num">${a.state ? `<a class="cp" data-apf="${a.mac}" title="Show this AP's clients">${a.clients}</a>` : '–'}</td>
         <td class="num" title="${esc(a.upIf)}">${a.state && a.upSpeed ? `<span class="${a.upSpeed < 1000 || a.upDuplex === 'half' ? 'warnc' : ''}">${a.upSpeed >= 1000 ? a.upSpeed / 1000 + ' G' : a.upSpeed + ' M'}${a.upDuplex === 'half' ? ' half' : ''}</span>` : ''}</td>
         <td class="num">${a.state ? (a.upErr ? `<span class="badc">${a.upErr}</span>` : '<span class="mut">0</span>') : ''}</td>
         <td class="num">${a.state ? (a.upDrop ? `<span class="warnc">${a.upDrop}</span>` : '<span class="mut">0</span>') : ''}</td>
         <td class="num">${a.state ? bytes(a.tx) : ''}</td>
         <td class="num">${a.state ? bytes(a.rx) : ''}</td>
-        <td class="num">${a.state ? dur(a.uptime) : `<span title="Maas alates ${a.lastSeen ? new Date(a.lastSeen * 1000).toLocaleString('et-EE') : '?'}">−${dur(-a.uptime)}</span>`}</td>
+        <td class="num">${a.state ? dur(a.uptime) : `<span title="Offline since ${a.lastSeen ? new Date(a.lastSeen * 1000).toLocaleString() : '?'}">−${dur(-a.uptime)}</span>`}</td>
         <td class="mut desc" title="${esc(a.reboot)}">${esc(a.reboot)}</td>
-        <td class="act">${a.state ? `<button class="danger" data-do="reboot" data-mac="${a.mac}" title="Taaskäivita">⟲</button>` : ''}</td>
+        <td class="act">${a.state ? `<button class="danger" data-do="reboot" data-mac="${a.mac}" title="Restart">⟲</button>` : ''}</td>
       </tr>${state.expanded.has(a.mac) ? apDetail(a) : ''}`).join('')}</tbody></table>`;
   }
 
@@ -425,32 +425,32 @@
     const sn = g('serial-number') || g('serial');
     const boot = (k, bad) => { const v = +r[`${k}-reboot-counter`] || 0; return v ? (bad ? `<span class="bad">${v}</span>` : `${v}`) : '<span class="z">0</span>'; };
 
-    const net = kv('Võrk', [['IP', `<span class="cp" data-copy="${g('ip')}">${g('ip')}</span>`], ['Mask', g('netmask')], ['Lüüs', g('gateway')], ['DNS', [g('dns1'), g('dns2')].filter(Boolean).join(', ')],
-      ['Režiim', r['by-dhcp'] === 'true' || c['by-dhcp'] === 'true' ? 'DHCP' : 'staatiline'], ['VLAN', g('mgmt-vlan-id')], ['PoE', g('poe-mode-str')]]);
+    const net = kv('Network', [['IP', `<span class="cp" data-copy="${g('ip')}">${g('ip')}</span>`], ['Mask', g('netmask')], ['Gateway', g('gateway')], ['DNS', [g('dns1'), g('dns2')].filter(Boolean).join(', ')],
+      ['Mode', r['by-dhcp'] === 'true' || c['by-dhcp'] === 'true' ? 'DHCP' : 'static'], ['VLAN', g('mgmt-vlan-id')], ['PoE', g('poe-mode-str')]]);
     const ed = (field, v, ph) => `<input class="ed" data-mac="${a.mac}" data-field="${field}" value="${esc(v)}" placeholder="${ph}" maxlength="${field === 'devname' ? 64 : 128}">`;
-    const dev = kv('Seade', [['Nimi', ed('devname', a.name, 'nimi')], ['Kirjeldus', ed('description', a.desc, 'lisa kirjeldus')], ['Seerianr', sn ? `<span class="cp" data-copy="${sn}">${sn}</span>` : ''], ['Riistvara', g('hardware-version')], ['Püsivara', g('firmware-version') || g('version')],
-      ['Mälu', r.mem_total ? `${bytes((r.mem_total - r.mem_avail) * 1024)} / ${bytes(r.mem_total * 1024)}` : ''], ['Temp.', a.temp ? esc(a.temp) + '°' : ''], ['Naabrid', g('num-neighbors') || '0'],
+    const dev = kv('Device', [['Name', ed('devname', a.name, 'name')], ['Description', ed('description', a.desc, 'add description')], ['Serial', sn ? `<span class="cp" data-copy="${sn}">${sn}</span>` : ''], ['Hardware', g('hardware-version')], ['Firmware', g('firmware-version') || g('version')],
+      ['Memory', r.mem_total ? `${bytes((r.mem_total - r.mem_avail) * 1024)} / ${bytes(r.mem_total * 1024)}` : ''], ['Temp.', a.temp ? esc(a.temp) + '°' : ''], ['Neighbors', g('num-neighbors') || '0'],
       ['Rogue', a.rogue ? `<span class="bad">${a.rogue}</span>` : ''], ['Mesh', a.mesh]]);
-    const boots = kv('Taaskäivitused', [['Kokku', g('total-boot-counter') || '0'], ['Rakendus', boot('application')], ['Kasutaja', boot('user')], ['Toide', boot('powercycle')],
-      ['Watchdog', boot('watchdog', 1)], ['Panic', boot('kernel-panic', 1)], ['Viimane', `<span title="${g('last-reboot-details')}">${g('last-reboot-reason')}</span>`], ['Liitumine', g('last-rejoin-reason')]]);
+    const boots = kv('Reboots', [['Total', g('total-boot-counter') || '0'], ['Application', boot('application')], ['User', boot('user')], ['Power', boot('powercycle')],
+      ['Watchdog', boot('watchdog', 1)], ['Panic', boot('kernel-panic', 1)], ['Last', `<span title="${g('last-reboot-details')}">${g('last-reboot-reason')}</span>`], ['Rejoin', g('last-rejoin-reason')]]);
 
     const vaps = [...a.vaps].sort((x, y) => x.ssid.localeCompare(y.ssid) || x['radio-band'].localeCompare(y['radio-band']));
-    const radios = vaps.length ? `<div><h4>Raadiod</h4><table><tr><th>SSID</th><th>Sagedus</th><th class="c">Kanal</th><th class="c">Kl</th><th class="c">TX</th><th class="c">RX</th><th class="c">Vead</th><th>BSSID</th></tr>
+    const radios = vaps.length ? `<div><h4>Radios</h4><table><tr><th>SSID</th><th>Band</th><th class="c">Channel</th><th class="c">Cl</th><th class="c">TX</th><th class="c">RX</th><th class="c">Errors</th><th>BSSID</th></tr>
       ${vaps.map((v) => `<tr><td>${esc(v.ssid)}</td><td><span class="tag ${v['radio-band'] === '5g' ? 'b5' : 'b24'}">${v['radio-band'] === '5g' ? '5 GHz' : '2.4 GHz'}</span></td><td class="c">${esc(v.channel)}</td>
-        <td class="c">${v['vap-up'] === 'Up' ? n(v['assoc-stas'] || v['num-sta']) : '<span class="bad">maas</span>'}</td><td class="c">${bytes(+v['tx-bytes'])}</td><td class="c">${bytes(+v['rx-bytes'])}</td>
+        <td class="c">${v['vap-up'] === 'Up' ? n(v['assoc-stas'] || v['num-sta']) : '<span class="bad">down</span>'}</td><td class="c">${bytes(+v['tx-bytes'])}</td><td class="c">${bytes(+v['rx-bytes'])}</td>
         <td class="c">${n((+v['tx-errors'] || 0) + (+v['rx-errors'] || 0))}</td><td class="mut cp" data-copy="${esc(v.bssid)}">${esc(v.bssid)}</td></tr>`).join('')}</table></div>` : '';
 
     const portCfg = new Map(a.ports.map((p) => [p.name, p]));
-    const ports = a.lan.length ? `<div><h4>Pordid</h4><table><tr><th></th><th>Port</th><th>Link</th><th>Tüüp</th><th class="c">VLAN</th></tr>${a.lan.map((l) => {
+    const ports = a.lan.length ? `<div><h4>Ports</h4><table><tr><th></th><th>Port</th><th>Link</th><th>Type</th><th class="c">VLAN</th></tr>${a.lan.map((l) => {
       const pc = portCfg.get('LAN' + (+l.Port + 1)) || {}; const phys = (l.Physical || '').trim(); const up = phys.startsWith('Up');
-      return `<tr><td><span class="dot ${up ? 'ok' : ''}"></span></td><td>${esc((l.Label || l.name).replace('10/100/1000 ', ''))}</td><td class="${up ? '' : 'z'}">${up ? esc(phys.replace(/^Up\s*/, '')) : 'maas'}</td><td>${esc(pc.type || '')}</td><td class="c">${esc(pc.vlan || '')}</td></tr>`;
+      return `<tr><td><span class="dot ${up ? 'ok' : ''}"></span></td><td>${esc((l.Label || l.name).replace('10/100/1000 ', ''))}</td><td class="${up ? '' : 'z'}">${up ? esc(phys.replace(/^Up\s*/, '')) : 'down'}</td><td>${esc(pc.type || '')}</td><td class="c">${esc(pc.vlan || '')}</td></tr>`;
     }).join('')}</table></div>` : '';
 
     const upIfs = a.ifs.filter((i) => i['if-operStatus'] === '1');
-    const ifs = upIfs.length ? `<div><h4>Uplink</h4><table><tr><th>Liides</th><th class="c">Kiirus</th><th class="c">Vead</th><th class="c">Drop</th></tr>${upIfs.map((i) => `<tr><td>${esc(i['if-name'])}</td><td class="c">${esc(i['if-speed'])} Mb/s</td><td class="c">${n((+i['if-inErrors'] || 0) + (+i['if-outErrors'] || 0))}</td><td class="c">${n((+i['if-inDiscards'] || 0) + (+i['if-outDiscards'] || 0))}</td></tr>`).join('')}</table></div>` : '';
+    const ifs = upIfs.length ? `<div><h4>Uplink</h4><table><tr><th>Interface</th><th class="c">Speed</th><th class="c">Errors</th><th class="c">Drop</th></tr>${upIfs.map((i) => `<tr><td>${esc(i['if-name'])}</td><td class="c">${esc(i['if-speed'])} Mb/s</td><td class="c">${n((+i['if-inErrors'] || 0) + (+i['if-outErrors'] || 0))}</td><td class="c">${n((+i['if-inDiscards'] || 0) + (+i['if-outDiscards'] || 0))}</td></tr>`).join('')}</table></div>` : '';
 
     const ev = state.events.filter((e) => e.ap === a.mac).slice(0, 6);
-    const events = ev.length ? `<div class="ev"><h4>Sündmused</h4><table>${ev.map((e) => `<tr><td>${clock(e.time)}</td><td class="sev${e.sev}">${esc(e.msg)}</td></tr>`).join('')}</table></div>` : '';
+    const events = ev.length ? `<div class="ev"><h4>Events</h4><table>${ev.map((e) => `<tr><td>${clock(e.time)}</td><td class="sev${e.sev}">${esc(e.msg)}</td></tr>`).join('')}</table></div>` : '';
 
     return `<tr class="det"><td colspan="16"><div class="ins">${net}${dev}${boots}<div></div><div class="full">${radios}${ports}${ifs}</div>${events}</div></td></tr>`;
   }
@@ -458,8 +458,8 @@
   function renderUpBase() {
     const at = state.upBase.at;
     $('#upBase').innerHTML = at
-      ? `<span class="mut" style="text-transform:none">vead/drop alates ${clock(at)}</span> <a data-upbase="reset" title="Nulli uuesti">⟲</a> <a data-upbase="clear" title="Näita kogu loendurit alates AP käivitusest">✕</a>`
-      : `<a data-upbase="reset" title="Vead ja drop näitavad edaspidi juurdekasvu alates sellest hetkest">nulli loendurid</a>`;
+      ? `<span class="mut" style="text-transform:none">errors/drops since ${clock(at)}</span> <a data-upbase="reset" title="Reset again">⟲</a> <a data-upbase="clear" title="Show full counters since AP boot">✕</a>`
+      : `<a data-upbase="reset" title="Errors and drops will show the increase from this moment on">reset counters</a>`;
   }
   function setUpBase(reset) {
     state.upBase = reset ? { at: Math.floor(Date.now() / 1000), aps: Object.fromEntries(state.aps.map((a) => [a.mac, { err: a.upErrRaw, drop: a.upDropRaw }])) } : { at: 0, aps: {} };
@@ -476,8 +476,8 @@
     $('#clCnt').textContent = list.length === state.clients.length ? state.clients.length : `${list.length}/${state.clients.length}`;
     $('#clApF').innerHTML = apf ? `<a data-apf="">✕ AP: ${esc(apf.name)}</a>` : '';
     $('#clT').innerHTML = `<table><thead><tr>
-      ${th('cl', 'host', 'Nimi')}${th('cl', 'ip', 'IP')}${th('cl', 'mac', 'MAC')}${th('cl', 'os', 'Seade')}${th('cl', 'ssid', 'SSID')}${th('cl', 'ap', 'AP')}
-      ${th('cl', 'band', 'Sagedus')}${th('cl', 'rssi', 'Signaal')}${th('cl', 'since', 'Ühendatud', 'num')}<th></th>
+      ${th('cl', 'host', 'Name')}${th('cl', 'ip', 'IP')}${th('cl', 'mac', 'MAC')}${th('cl', 'os', 'Device')}${th('cl', 'ssid', 'SSID')}${th('cl', 'ap', 'AP')}
+      ${th('cl', 'band', 'Band')}${th('cl', 'rssi', 'Signal')}${th('cl', 'since', 'Connected', 'num')}<th></th>
       </tr></thead><tbody>${list.map((c) => `
       <tr class="${rowFlash('cl' + c.mac, c.apMac + c.ch)}">
         <td title="${esc(c.user)}">${c.host ? esc(c.host) : '<span class="mut">—</span>'}</td>
@@ -489,20 +489,20 @@
         <td><span class="tag ${c.band === '5g' ? 'b5' : 'b24'}">${c.band === '5g' ? '5G' : '2.4'}</span> <span class="mut">ch${c.ch}</span></td>
         <td>${rssiBar(c.rssi)}</td>
         <td class="num">${ago(c.since)}</td>
-        <td class="act"><button data-do="kick" data-mac="${c.mac}" title="Ühenda lahti">⏏</button><button class="danger" data-do="block" data-mac="${c.mac}" title="Blokeeri">⛔</button></td>
+        <td class="act"><button data-do="kick" data-mac="${c.mac}" title="Disconnect">⏏</button><button class="danger" data-do="block" data-mac="${c.mac}" title="Block">⛔</button></td>
       </tr>`).join('')}</tbody></table>`;
   }
 
   function renderWlans() {
-    $('#wlT').innerHTML = `<table><thead><tr><th></th><th>SSID</th><th class="num">Kl</th><th>Turve</th><th class="num">VLAN</th><th></th></tr></thead><tbody>${state.wlans.map((w) => `
-      <tr><td><span class="sw ${w.enabled ? 'on' : ''}" data-wlan="${esc(w.id)}" title="${w.enabled ? 'Lülita välja' : 'Lülita sisse'}"></span></td>
-      <td><a class="cp" data-q="${esc(w.ssid)}">${esc(w.ssid)}</a>${w.guest ? ' <span class="tag">külalised</span>' : ''}${w.hidden ? ' <span class="tag">peidetud</span>' : ''}</td>
+    $('#wlT').innerHTML = `<table><thead><tr><th></th><th>SSID</th><th class="num">Cl</th><th>Security</th><th class="num">VLAN</th><th></th></tr></thead><tbody>${state.wlans.map((w) => `
+      <tr><td><span class="sw ${w.enabled ? 'on' : ''}" data-wlan="${esc(w.id)}" title="${w.enabled ? 'Disable' : 'Enable'}"></span></td>
+      <td><a class="cp" data-q="${esc(w.ssid)}">${esc(w.ssid)}</a>${w.guest ? ' <span class="tag">guest</span>' : ''}${w.hidden ? ' <span class="tag">hidden</span>' : ''}</td>
       <td class="num">${w.clients}</td><td class="mut">${esc(w.auth)} · ${esc(w.enc)}</td><td class="num">${esc(w.vlan)}</td><td></td></tr>`).join('')}</tbody></table>${state.blocked.length ? `
-      <table><thead><tr><th>⛔ Blokeeritud</th><th></th><th></th></tr></thead><tbody>${state.blocked.map((b) => `
-      <tr><td class="cp" data-copy="${esc(b.mac)}">${esc(b.mac)}</td><td class="mut">${esc(b.host)}</td><td class="act"><button data-do="unblock" data-mac="${esc(b.mac)}" title="Eemalda blokeering">Luba</button></td></tr>`).join('')}</tbody></table>` : ''}`;
+      <table><thead><tr><th>⛔ Blocked</th><th></th><th></th></tr></thead><tbody>${state.blocked.map((b) => `
+      <tr><td class="cp" data-copy="${esc(b.mac)}">${esc(b.mac)}</td><td class="mut">${esc(b.host)}</td><td class="act"><button data-do="unblock" data-mac="${esc(b.mac)}" title="Remove block">Unblock</button></td></tr>`).join('')}</tbody></table>` : ''}`;
   }
 
-  // AP[nimi@mac] tükid välja – AP on eraldi veerus
+  // strip AP[name@mac] parts – the AP has its own column
   function evText(m) {
     return (m || '')
       .replace(/\s+of\s+AP\[[^\]]*\]/g, '')
@@ -523,10 +523,10 @@
     const list = sortBy(state.events.map((e) => ({ ...e, apName: evAp(e), text: evText(e.msg) })).filter(matches), 'ev');
     $('#evCnt').textContent = list.length;
     let day = '';
-    $('#evT').innerHTML = `<table class="evt"><thead><tr>${th('ev', 'time', 'Aeg')}<th></th>${th('ev', 'apName', 'AP')}${th('ev', 'text', 'Sündmus')}</tr></thead><tbody>${list.slice(0, 300).map((e) => {
-      const d = new Date(e.time * 1000).toLocaleDateString('et-EE', { weekday: 'short', day: 'numeric', month: 'long' });
+    $('#evT').innerHTML = `<table class="evt"><thead><tr>${th('ev', 'time', 'Time')}<th></th>${th('ev', 'apName', 'AP')}${th('ev', 'text', 'Event')}</tr></thead><tbody>${list.slice(0, 300).map((e) => {
+      const d = new Date(e.time * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'long' });
       const sep = state.sort.ev[0] === 'time' && d !== day ? `<tr class="day"><td colspan="4">${(day = d)}</td></tr>` : '';
-      return `${sep}<tr><td class="mut num">${clock(e.time).slice(-8)}</td><td><span class="dot sv${e.sev}" title="Tase ${e.sev}"></span></td>
+      return `${sep}<tr><td class="mut num">${clock(e.time).slice(-8)}</td><td><span class="dot sv${e.sev}" title="Severity ${e.sev}"></span></td>
         <td>${e.apName ? `<a class="cp" data-q="${esc(e.apName)}">${esc(e.apName)}</a>` : ''}</td><td class="sev${e.sev}" title="${esc(e.code)} · ${esc(e.msg)}">${esc(e.text)}</td></tr>`;
     }).join('')}</tbody></table>`;
   }
@@ -536,26 +536,26 @@
     const s = state.sys;
     const off = state.aps.filter((a) => !a.state).length;
     const mem = s.memTotal ? Math.round((1 - s.memFree / s.memTotal) * 100) : 0;
-    $('#tgSys').innerHTML = s.name ? `${esc(s.name)} · ${esc(s.model)} ${esc(s.ip)} · v${esc(s.ver)} · üleval ${dur(s.uptime)}` : '';
+    $('#tgSys').innerHTML = s.name ? `${esc(s.name)} · ${esc(s.model)} ${esc(s.ip)} · v${esc(s.ver)} · up ${dur(s.uptime)}` : '';
     $('#tgKpi').innerHTML = s.name ? `
       <span>AP <em class="${off ? 'bad' : ''}">${state.aps.length - off}/${state.aps.length}</em></span>
-      <span>kliente <em>${state.clients.length}</em></span>
+      <span>clients <em>${state.clients.length}</em></span>
       <span>5G <em>${state.clients.filter((c) => c.band === '5g').length}</em></span>
-      <span>CPU <em>${s.cpu}%</em></span><span>mälu <em>${mem}%</em></span>` : '';
-    document.title = (off ? `⚠ ${off} AP maas · ` : '') + `${state.clients.length} kl · Unleashed`;
+      <span>CPU <em>${s.cpu}%</em></span><span>memory <em>${mem}%</em></span>` : '';
+    document.title = (off ? `⚠ ${off} AP offline · ` : '') + `${state.clients.length} cl · Unleashed`;
   }
 
   function renderStatus() {
     const el = $('#tgStat');
     if (state.error) {
-      el.innerHTML = `<span class="err">${esc(state.error)} — <a href="/admin/login.jsp">logi uuesti sisse</a></span>`;
+      el.innerHTML = `<span class="err">${esc(state.error)} — <a href="/admin/login.jsp">log in again</a></span>`;
     } else {
       el.innerHTML = `<span class="dot ${state.loading ? 'load' : 'ok'}"></span> <span class="mut">${state.lastOk ? clock(state.lastOk / 1000) : '…'}</span>`;
     }
   }
 
   function render() {
-    // säilita kerimisasendid
+    // keep scroll positions
     const sc = [...root.querySelectorAll('.scroll')].map((e) => e.scrollTop);
     renderHeader(); renderUpBase(); if (!editing) renderAps(); renderClients(); renderWlans(); renderEvents(); renderStatus();
     root.querySelectorAll('.scroll').forEach((e, i) => { e.scrollTop = sc[i]; });
@@ -564,18 +564,18 @@
   // ---------- CSV ----------
   function csv(kind) {
     const rows = kind === 'ap'
-      ? [['Nimi', 'Kirjeldus', 'Mudel', 'IP', 'MAC', 'Seis', 'Kliendid', '2.4 kanal', '5G kanal', 'Üleval (s)', 'Püsivara', 'Seerianr'],
-        ...sortBy(state.aps.filter(matches), 'ap').map((a) => [a.name, a.desc, a.model, a.ip, a.mac, a.state ? 'üleval' : 'maas', a.clients, a.ch24, a.ch5, a.uptime, a.fw, a.serial])]
-      : [['Nimi', 'IP', 'MAC', 'OS', 'Tüüp', 'SSID', 'AP', 'Sagedus', 'Kanal', 'RSSI', 'Ühendatud alates'],
+      ? [['Name', 'Description', 'Model', 'IP', 'MAC', 'State', 'Clients', '2.4 channel', '5G channel', 'Uptime (s)', 'Firmware', 'Serial'],
+        ...sortBy(state.aps.filter(matches), 'ap').map((a) => [a.name, a.desc, a.model, a.ip, a.mac, a.state ? 'up' : 'down', a.clients, a.ch24, a.ch5, a.uptime, a.fw, a.serial])]
+      : [['Name', 'IP', 'MAC', 'OS', 'Type', 'SSID', 'AP', 'Band', 'Channel', 'RSSI', 'Connected since'],
         ...sortBy(state.clients.filter(matches), 'cl').map((c) => [c.host, c.ip, c.mac, c.os, c.type, c.ssid, c.ap, c.band, c.ch, c.rssi, new Date(c.since * 1000).toISOString()])];
     const text = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv' }));
-    a.download = `unleashed-${kind === 'ap' ? 'ap' : 'kliendid'}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`;
+    a.download = `unleashed-${kind === 'ap' ? 'aps' : 'clients'}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`;
     a.click(); URL.revokeObjectURL(a.href);
   }
 
-  // ---------- AP nime/kirjelduse muutmine detailivaates ----------
+  // ---------- editing AP name/description in the detail view ----------
   let editing = null;
   async function saveField(inp) {
     const { mac, field } = inp.dataset;
@@ -587,8 +587,8 @@
     try {
       await cmd.apSet(mac, field, val);
       if (field === 'devname') ap.name = val; else ap.desc = val;
-      toast(`✎ ${old || ap.name} → ${val || '(tühi)'}`, 'ok');
-    } catch (err) { inp.value = old; toast(`Ebaõnnestus: ${err.message}`, 'bad'); }
+      toast(`✎ ${old || ap.name} → ${val || '(empty)'}`, 'ok');
+    } catch (err) { inp.value = old; toast(`Failed: ${err.message}`, 'bad'); }
     inp.disabled = false;
   }
   root.addEventListener('focusin', (e) => { if (e.target.matches('input.ed')) editing = e.target.dataset.mac; });
@@ -607,7 +607,7 @@
     }
   });
 
-  // ---------- sündmused ----------
+  // ---------- events ----------
   root.addEventListener('click', async (e) => {
     if (e.target.closest('input.ed')) return;
     const ub = e.target.closest('[data-upbase]');
@@ -632,26 +632,26 @@
     } else if (t.dataset.q) {
       $('#tgQ').value = state.filter = state.filter === t.dataset.q ? '' : t.dataset.q; render();
     } else if (t.dataset.copy) {
-      await navigator.clipboard.writeText(t.dataset.copy).catch(() => {}); toast(`Kopeeritud: ${t.dataset.copy}`, 'muted');
+      await navigator.clipboard.writeText(t.dataset.copy).catch(() => {}); toast(`Copied: ${t.dataset.copy}`, 'muted');
     } else if (t.dataset.csv) {
       csv(t.dataset.csv);
     } else if (t.dataset.do) {
       const mac = t.dataset.mac, act = t.dataset.do;
       const ap = state.aps.find((a) => a.mac === mac), cl = state.clients.find((c) => c.mac === mac);
       const who = ap ? ap.name : (cl?.host || cl?.ip || state.blocked.find((b) => b.mac === mac)?.host || mac);
-      const ask = { reboot: `Taaskäivitada AP „${who}”?\nSelle ${ap?.clients || 0} klienti katkestatakse.`, block: `Blokeerida seade „${who}” (${mac})?\nBlokeeringu saab eemaldada WiFi-võrkude all olevast nimekirjast.` }[act];
+      const ask = { reboot: `Restart AP "${who}"?\nIts ${ap?.clients || 0} clients will be disconnected.`, block: `Block device "${who}" (${mac})?\nYou can unblock it from the list under WLANs.` }[act];
       if (ask && !confirm(ask)) return;
       try {
         t.disabled = true;
         await cmd[act](mac);
-        toast({ reboot: `⟲ ${who} taaskäivitub`, kick: `⏏ ${who} ühendati lahti`, block: `⛔ ${who} blokeeritud`, unblock: `✓ ${who} blokeering eemaldatud` }[act], 'ok');
+        toast({ reboot: `⟲ ${who} is restarting`, kick: `⏏ ${who} disconnected`, block: `⛔ ${who} blocked`, unblock: `✓ ${who} unblocked` }[act], 'ok');
         setTimeout(load, 1500);
-      } catch (err) { toast(`Ebaõnnestus: ${err.message}`, 'bad'); } finally { t.disabled = false; }
+      } catch (err) { toast(`Failed: ${err.message}`, 'bad'); } finally { t.disabled = false; }
     } else if (t.dataset.wlan) {
       const w = state.wlans.find((x) => x.id === t.dataset.wlan);
       if (!w) return;
-      if (!confirm(`${w.enabled ? 'Lülitada VÄLJA' : 'Lülitada SISSE'} WiFi-võrk „${w.ssid}”?${w.enabled && w.clients ? `\n${w.clients} klienti kaotab ühenduse.` : ''}`)) return;
-      try { await cmd.wlan(w, !w.enabled); toast(`${w.ssid} ${w.enabled ? 'välja' : 'sisse'} lülitatud`, 'ok'); setTimeout(load, 1000); } catch (err) { toast(`Ebaõnnestus: ${err.message}`, 'bad'); }
+      if (!confirm(`${w.enabled ? 'DISABLE' : 'ENABLE'} WLAN "${w.ssid}"?${w.enabled && w.clients ? `\n${w.clients} clients will lose connection.` : ''}`)) return;
+      try { await cmd.wlan(w, !w.enabled); toast(`${w.ssid} ${w.enabled ? 'disabled' : 'enabled'}`, 'ok'); setTimeout(load, 1000); } catch (err) { toast(`Failed: ${err.message}`, 'bad'); }
     }
   });
 
@@ -675,7 +675,7 @@
   let timer;
   function schedule() { clearInterval(timer); if (state.interval) timer = setInterval(() => { if (!document.hidden && root.style.display !== 'none') load(); }, state.interval * 1000); }
   document.addEventListener('visibilitychange', () => { if (!document.hidden && root.style.display !== 'none') load(); });
-  // suhtelised ajad püsivad värsked ka käsitsi režiimis
+  // keep relative times fresh in manual mode too
   setInterval(() => { if (!state.loading && root.style.display !== 'none') renderStatus(); }, 1000);
 
   schedule();

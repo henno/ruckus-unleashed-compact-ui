@@ -2,8 +2,6 @@
 
 A Tampermonkey userscript that replaces the Ruckus Unleashed dashboard with a dense, single-screen, table-based admin view. Everything is visible at once: access points, clients, WLANs and events. No cards, minimal padding, minimal clicking.
 
-The interface language is Estonian.
-
 ## Features
 
 - **Access points:** status, name, description, model, IP, MAC, client count, uplink speed, uplink errors and drops, traffic, uptime (negative for offline APs), last reboot reason. Sortable columns.
