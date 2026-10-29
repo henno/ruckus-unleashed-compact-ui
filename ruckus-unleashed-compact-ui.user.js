@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ruckus Unleashed Compact UI
 // @namespace    https://github.com/henno/ruckus-unleashed-compact-ui
-// @version      1.14.1
+// @version      1.15.0
 // @description  Dense single-screen table UI for Ruckus Unleashed: APs, clients, WLANs and events at once.
 // @author       Henno Täht
 // @license      MIT
@@ -173,6 +173,21 @@
     return `<span class="${value != null && value > 30 ? 'warnc' : ''}" title="Non-Wi-Fi busy time. Above 30%: investigate; this does not identify the source.">${rfValue(value, 1, '%')}</span>`;
   }
 
+  function apRemarks(ap) {
+    if (!ap.state) return 'Offline';
+    const notes = [];
+    const power = ap.raw['poe-mode-warning-code'];
+    if (power === 'UN_LIMIT_FUNCTION_POE_MODE_WARNING') notes.push('Insufficient power: functions limited');
+    else if (power && power !== '0') notes.push(`Power warning: ${power}`);
+    if (ap.upSpeed > 0 && ap.upSpeed < 1000) notes.push(`Uplink ${ap.upSpeed} Mbps`);
+    if (ap.upDuplex === 'half') notes.push('Uplink half duplex');
+    if (ap.upErr > 0) notes.push(`Uplink errors: ${ap.upErr} (counter)`);
+    for (const [band, busy] of [['2.4 GHz', ap.busy24], ['5 GHz', ap.busy5]]) {
+      if (busy != null && busy > 30) notes.push(`${band} non-Wi-Fi busy: ${busy.toFixed(1)}%`);
+    }
+    return notes.join('; ');
+  }
+
   function parseAp(el) {
     const a = attrs(el);
     const c = state.apsConf.get(a.mac) || {};
@@ -213,6 +228,7 @@
     ap.upIf = up ? up['if-name'] : '';
     // an offline AP's uptime is negative: how long it has been down (also sorts correctly)
     if (!ap.state) ap.uptime = ap.lastSeen ? -Math.round(Date.now() / 1000 - ap.lastSeen) : 0;
+    ap.remarks = apRemarks(ap);
     return ap;
   }
 
@@ -439,7 +455,7 @@
     $('#apT').innerHTML = `<table><thead><tr>
       ${th('ap', 'state', '')}${th('ap', 'name', 'Name')}${th('ap', 'desc', 'Description')}${th('ap', 'model', 'Model')}${th('ap', 'ip', 'IP')}${th('ap', 'vlan', 'VLAN', 'num')}${th('ap', 'mac', 'MAC')}
       ${th('ap', 'clients', 'Cl', 'num')}${th('ap', 'upSpeed', 'Uplink', 'num')}${th('ap', 'upErr', 'Errors', 'num')}${th('ap', 'upDrop', 'Drop', 'num')}
-      ${th('ap', 'busy24', 'Busy 2.4G', 'num')}${th('ap', 'busy5', 'Busy 5G', 'num')}${th('ap', 'tx', 'TX', 'num')}${th('ap', 'rx', 'RX', 'num')}${th('ap', 'uptime', 'Uptime', 'num')}${th('ap', 'reboot', 'Last reboot')}<th></th>
+      ${th('ap', 'busy24', 'Busy 2.4G', 'num')}${th('ap', 'busy5', 'Busy 5G', 'num')}${th('ap', 'tx', 'TX', 'num')}${th('ap', 'rx', 'RX', 'num')}${th('ap', 'uptime', 'Uptime', 'num')}${th('ap', 'remarks', 'Remarks')}<th></th>
       </tr></thead><tbody>${list.map((a) => `
       <tr data-ap="${a.mac}" class="${a.state ? '' : 'off'}${state.expanded.has(a.mac) ? ' open' : ''}${state.apFilter === a.mac ? ' sel' : ''}${rowFlash('ap' + a.mac, a.state + '|' + a.clients + '|' + a.ch24 + '|' + a.ch5)}">
         <td><span class="dot ${a.state ? 'ok' : 'bad'}"></span></td>
@@ -458,7 +474,7 @@
         <td class="num">${a.state ? bytes(a.tx) : ''}</td>
         <td class="num">${a.state ? bytes(a.rx) : ''}</td>
         <td class="num">${a.state ? dur(a.uptime) : `<span title="Offline since ${a.lastSeen ? new Date(a.lastSeen * 1000).toLocaleString() : '?'}">−${dur(-a.uptime)}</span>`}</td>
-        <td class="mut desc" title="${esc(a.reboot)}">${esc(a.reboot)}</td>
+        <td class="${a.remarks ? (a.state ? 'warnc' : 'badc') : 'mut'} desc" title="${esc(a.remarks)}">${esc(a.remarks || '–')}</td>
         <td class="act">${a.state ? `<button class="danger" data-do="reboot" data-mac="${a.mac}" title="Restart">⟲</button>` : ''}</td>
       </tr>${state.expanded.has(a.mac) ? apDetail(a) : ''}`).join('')}</tbody></table>`;
   }

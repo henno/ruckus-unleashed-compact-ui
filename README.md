@@ -46,3 +46,5 @@ All requests go from your browser to the controller with your existing login ses
 ## License
 
 MIT
+
+Version 1.15.0 replaces the AP table's Last reboot column with Remarks. It shows the controller's power warning, offline status, an uplink below 1 Gbps, half duplex, uplink error counters, and non-Wi-Fi busy airtime above 30%. Multiple remarks appear in the cell tooltip. Remarks can be searched and sorted. A dash means no listed condition was detected; it is not a complete health check. Error counts use the same baseline as the Errors column and do not prove an ongoing fault. Reboot history remains in the AP detail view. PoE mode alone does not trigger a warning.
