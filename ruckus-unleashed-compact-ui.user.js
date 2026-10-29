@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ruckus Unleashed Compact UI
 // @namespace    https://github.com/henno/ruckus-unleashed-compact-ui
-// @version      1.13.0
+// @version      1.14.0
 // @description  Dense single-screen table UI for Ruckus Unleashed: APs, clients, WLANs and events at once.
 // @author       Henno Täht
 // @license      MIT
@@ -84,7 +84,7 @@
     state.loading = true; renderStatus();
     try {
       const [st, sys, ev, apc, wlc, acl] = await Promise.all([
-        stat('stamgr', "<ap LEVEL='2'/><client LEVEL='1'/><wlan LEVEL='1'/>"),
+        ajax('cmdstat', 'getstat', 'stamgr', "<ap LEVEL='2'/><client LEVEL='1'/><wlan LEVEL='1'/>"),
         stat('system', '<sysinfo/><identity/><mgmt-ip/>'),
         stat('eventd', "<xevent sortBy='time' sortDirection='-1'/>"),
         state.apsConf.size ? null : conf('ap-list'),
@@ -133,6 +133,46 @@
     }
   }
 
+  // Use the same sample averages as the Unleashed 200.15 radio view.
+  function parseRadio(r, online) {
+    const number = (key) => {
+      const value = r[key];
+      return value == null || String(value).trim() === '' || !Number.isFinite(Number(value)) ? null : Number(value);
+    };
+    const samples = number('rf-samples');
+    const valid = online && samples > 0;
+    const average = (key) => {
+      const value = number(key);
+      return valid && value != null && value >= 0 ? value / samples : null;
+    };
+    const airtime = (key) => {
+      const value = average(key);
+      return value != null && value <= 100 ? value : null;
+    };
+    const noise = number('noisefloor');
+    const txCounts = ['radio-total-tx-mcast', 'radio-total-tx-fail', 'radio-total-tx-pkts'].map(number);
+    const txTotal = txCounts.every((v) => v != null && v >= 0) ? txCounts.reduce((a, b) => a + b, 0) : 0;
+    const ratio = (key) => {
+      const value = number(key);
+      return online && txTotal > 0 && value != null && value >= 0 ? 100 * value / txTotal : null;
+    };
+    return {
+      band: r['radio-band'], channel: r.channel || '', width: r.channelization || '',
+      total: airtime('airtime-total'), busy: airtime('airtime-busy'),
+      rx: airtime('airtime-rx'), tx: airtime('airtime-tx'),
+      noise: valid && noise != null && noise < 0 ? noise : null,
+      phy: average('phyerr'), retries: ratio('radio-total-retries'), drops: ratio('radio-total-tx-fail'),
+    };
+  }
+
+  function rfValue(value, digits = 1, suffix = '') {
+    return value == null ? '—' : value.toFixed(digits) + suffix;
+  }
+
+  function rfBusy(value) {
+    return `<span class="${value != null && value > 30 ? 'warnc' : ''}" title="Non-Wi-Fi busy time. Above 30%: investigate; this does not identify the source.">${rfValue(value, 1, '%')}</span>`;
+  }
+
   function parseAp(el) {
     const a = attrs(el);
     const c = state.apsConf.get(a.mac) || {};
@@ -148,6 +188,9 @@
       fw: a['firmware-version'], serial: a['serial-number'], reboot: a['last-reboot-reason'] || '', temp: a['current-temperature'] !== 'unavailable' ? a['current-temperature'] : '',
       rogue: +a['num-rogue'] || 0, clients: 0, vlan: +(a['mgmt-vlan-id'] || c['mgmt-vlan-id']) || '',
       raw: a, conf: c,
+      radios: radios.map((r) => parseRadio(r, a.state === '1')),
+      busy24: parseRadio(r24, a.state === '1').busy,
+      busy5: parseRadio(r5, a.state === '1').busy,
       vaps: [...el.querySelectorAll(':scope > vap')].map(attrs),
       lan: [...el.querySelectorAll(':scope > lan-port')].map(attrs),
       ports: [...el.querySelectorAll(':scope > port')].map(attrs),
@@ -396,7 +439,7 @@
     $('#apT').innerHTML = `<table><thead><tr>
       ${th('ap', 'state', '')}${th('ap', 'name', 'Name')}${th('ap', 'desc', 'Description')}${th('ap', 'model', 'Model')}${th('ap', 'ip', 'IP')}${th('ap', 'vlan', 'VLAN', 'num')}${th('ap', 'mac', 'MAC')}
       ${th('ap', 'clients', 'Cl', 'num')}${th('ap', 'upSpeed', 'Uplink', 'num')}${th('ap', 'upErr', 'Errors', 'num')}${th('ap', 'upDrop', 'Drop', 'num')}
-      ${th('ap', 'tx', 'TX', 'num')}${th('ap', 'rx', 'RX', 'num')}${th('ap', 'uptime', 'Uptime', 'num')}${th('ap', 'reboot', 'Last reboot')}<th></th>
+      ${th('ap', 'busy24', 'Busy 2.4G', 'num')}${th('ap', 'busy5', 'Busy 5G', 'num')}${th('ap', 'tx', 'TX', 'num')}${th('ap', 'rx', 'RX', 'num')}${th('ap', 'uptime', 'Uptime', 'num')}${th('ap', 'reboot', 'Last reboot')}<th></th>
       </tr></thead><tbody>${list.map((a) => `
       <tr data-ap="${a.mac}" class="${a.state ? '' : 'off'}${state.expanded.has(a.mac) ? ' open' : ''}${state.apFilter === a.mac ? ' sel' : ''}${rowFlash('ap' + a.mac, a.state + '|' + a.clients + '|' + a.ch24 + '|' + a.ch5)}">
         <td><span class="dot ${a.state ? 'ok' : 'bad'}"></span></td>
@@ -410,6 +453,8 @@
         <td class="num" title="${esc(a.upIf)}">${a.state && a.upSpeed ? `<span class="${a.upSpeed < 1000 || a.upDuplex === 'half' ? 'warnc' : ''}">${a.upSpeed >= 1000 ? a.upSpeed / 1000 + ' G' : a.upSpeed + ' M'}${a.upDuplex === 'half' ? ' half' : ''}</span>` : ''}</td>
         <td class="num">${a.state ? (a.upErr ? `<span class="badc">${a.upErr}</span>` : '<span class="mut">0</span>') : ''}</td>
         <td class="num">${a.state ? (a.upDrop ? `<span class="warnc">${a.upDrop}</span>` : '<span class="mut">0</span>') : ''}</td>
+        <td class="num">${rfBusy(a.busy24)}</td>
+        <td class="num">${rfBusy(a.busy5)}</td>
         <td class="num">${a.state ? bytes(a.tx) : ''}</td>
         <td class="num">${a.state ? bytes(a.rx) : ''}</td>
         <td class="num">${a.state ? dur(a.uptime) : `<span title="Offline since ${a.lastSeen ? new Date(a.lastSeen * 1000).toLocaleString() : '?'}">−${dur(-a.uptime)}</span>`}</td>
@@ -435,6 +480,8 @@
     const boots = kv('Reboots', [['Total', g('total-boot-counter') || '0'], ['Application', boot('application')], ['User', boot('user')], ['Power', boot('powercycle')],
       ['Watchdog', boot('watchdog', 1)], ['Panic', boot('kernel-panic', 1)], ['Last', `<span title="${g('last-reboot-details')}">${g('last-reboot-reason')}</span>`], ['Rejoin', g('last-rejoin-reason')]]);
 
+    const rf = `<div><h4>Radio airtime and noise</h4><table><thead><tr><th>Band</th><th>Channel</th><th>Width MHz</th><th>Total %</th><th>Busy %</th><th>RX %</th><th>TX %</th><th>Noise dBm</th><th>PHY errors/sample</th><th>Retries %</th><th>Drops %</th></tr></thead><tbody>${a.radios.map((r) => `<tr><td>${esc(r.band)}</td><td>${esc(r.channel)}</td><td>${esc(r.width)}</td><td>${rfValue(r.total)}</td><td>${rfBusy(r.busy)}</td><td>${rfValue(r.rx)}</td><td>${rfValue(r.tx)}</td><td>${rfValue(r.noise, 0)}</td><td>${rfValue(r.phy, 0)}</td><td>${rfValue(r.retries, 3)}</td><td>${rfValue(r.drops, 5)}</td></tr>`).join('')}</tbody></table>
+      <p class="mut">Controller sample averages, not an instant measurement. Busy: non-Wi-Fi busy time; RX/TX: receive/transmit time. —: no valid sample or AP offline. Retries/drops use radio traffic counters. A high value does not identify an interference source.</p></div>`;
     const vaps = [...a.vaps].sort((x, y) => x.ssid.localeCompare(y.ssid) || x['radio-band'].localeCompare(y['radio-band']));
     const radios = vaps.length ? `<div><h4>Radios</h4><table><tr><th>SSID</th><th>Band</th><th class="c">Channel</th><th class="c">VLAN</th><th class="c">Cl</th><th class="c">TX</th><th class="c">RX</th><th class="c">Errors</th><th>BSSID</th></tr>
       ${vaps.map((v) => `<tr><td>${esc(v.ssid)}</td><td><span class="tag ${v['radio-band'] === '5g' ? 'b5' : 'b24'}">${v['radio-band'] === '5g' ? '5 GHz' : '2.4 GHz'}</span></td><td class="c">${esc(v.channel)}</td><td class="c">${esc(state.wlans.find((w) => w.ssid === v.ssid)?.vlan || '')}</td>
@@ -453,7 +500,7 @@
     const ev = state.events.filter((e) => e.ap === a.mac).slice(0, 6);
     const events = ev.length ? `<div class="ev"><h4>Events</h4><table>${ev.map((e) => `<tr><td>${clock(e.time)}</td><td class="sev${e.sev}">${esc(e.msg)}</td></tr>`).join('')}</table></div>` : '';
 
-    return `<tr class="det"><td colspan="17"><div class="ins">${net}${dev}${boots}<div></div><div class="full">${radios}${ports}${ifs}</div>${events}</div></td></tr>`;
+    return `<tr class="det"><td colspan="18"><div class="ins">${net}${dev}${boots}<div></div><div class="full">${rf}${radios}${ports}${ifs}</div>${events}</div></td></tr>`;
   }
 
   function renderUpBase() {

@@ -15,6 +15,16 @@ A Tampermonkey userscript that replaces the Ruckus Unleashed dashboard with a de
 - CSV export, light/dark/auto theme, font and size selection, keyboard shortcuts (`/` search, `r` refresh, `t` theme, `Esc` clear).
 - **Original UI** button switches back to the stock Ruckus dashboard.
 
+## Radio measurements
+
+Version 1.14.0 adds Busy 2.4G and Busy 5G columns. Open an AP row for total, busy, RX and TX airtime, noise floor, PHY errors per sample, and retry/drop percentages.
+
+The calculations follow the Unleashed 200.15.6.212.27 radio view. Airtime counters are divided by `rf-samples`. These are controller sample averages; the refresh interval is not the measurement window. Missing or invalid measurements and offline APs show a dash. Busy above 30% is highlighted as a reason to investigate, not proof of a jammer. See [RUCKUS guidance](https://community.ruckuswireless.com/discussion/71325/airtime-utilization-in-unleashed).
+
+The AP statistics request omits `caller='unleashed_web'`, which strips the RF fields on this firmware. It uses the existing read-only request and refresh interval. It does not enable scans, change radio settings, or open SSH sessions.
+
+Validation: `node --check ruckus-unleashed-compact-ui.user.js` and `node tests/radio.test.cjs`.
+
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
