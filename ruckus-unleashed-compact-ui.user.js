@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ruckus Unleashed Compact UI
 // @namespace    https://github.com/henno/ruckus-unleashed-compact-ui
-// @version      1.15.0
+// @version      1.16.0
 // @description  Dense single-screen table UI for Ruckus Unleashed: APs, clients, WLANs and events at once.
 // @author       Henno Täht
 // @license      MIT
@@ -291,6 +291,10 @@
   :root[data-tg-theme=dark]{--head-bg:#181c21;--head-txt:#8a93a1;--head-section:#111418;--bg:#111418;--panel:#181c21;--line:#2a2f37;--txt:#e3e6ea;--mut:#8a93a1;--hov:#24221f;--sel:#3a2a1c}
   #tgU,#tgU *{box-sizing:border-box}
   #tgU{position:fixed;inset:0;z-index:2147483000;background:var(--bg);color:var(--txt);font-size:var(--fz);line-height:1.1;font-family:var(--ff);font-weight:var(--fw);font-stretch:var(--fst);letter-spacing:.02em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-synthesis:none;display:grid;grid-template-rows:auto 1fr;overflow:hidden}
+  #tgU #tgTooltip{position:fixed;z-index:10;width:max-content;max-width:min(360px,calc(100vw - 24px));padding:10px 13px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--txt);box-shadow:0 8px 28px #0003;font:400 13px/1.5 system-ui,sans-serif;letter-spacing:normal;white-space:pre-wrap;overflow-wrap:anywhere;max-height:calc(100vh - 24px);overflow:auto;transition:opacity .12s ease;opacity:1}
+  #tgU #tgTooltip[hidden]{display:none}
+  #tgU [data-tooltip]:not(button):not(select):not(a){cursor:help}
+  @media(prefers-reduced-motion:reduce){#tgU #tgTooltip{transition:none}}
   #tgU header{display:flex;align-items:center;gap:10px;padding:2px 6px;background:var(--panel);border-bottom:2px solid var(--acc);white-space:nowrap}
   :root{--ff:'Pathway Extreme',sans-serif;--fw:300;--fst:75%;--fz:11px}
   :root[data-tg-font=ext400]{--fw:400} :root[data-tg-font=ext200]{--fw:200}
@@ -416,6 +420,69 @@
   document.documentElement.style.overflow = 'hidden';
 
   const $ = (s) => root.querySelector(s);
+
+  // Use one tooltip for all table cells and controls, including refreshed rows.
+  const tooltip = document.createElement('div');
+  tooltip.id = 'tgTooltip';
+  tooltip.setAttribute('role', 'tooltip');
+  tooltip.hidden = true;
+  root.appendChild(tooltip);
+  let tipTarget = null, tipTimer;
+  function hideTooltip() {
+    clearTimeout(tipTimer);
+    if (tipTarget) {
+      const ids = (tipTarget.getAttribute('aria-describedby') || '').split(/\s+/).filter((id) => id && id !== tooltip.id);
+      if (ids.length) tipTarget.setAttribute('aria-describedby', ids.join(' '));
+      else tipTarget.removeAttribute('aria-describedby');
+    }
+    tooltip.hidden = true;
+    tipTarget = null;
+  }
+  function showTooltip(target) {
+    if (target === tipTarget) return;
+    hideTooltip();
+    if (!target?.dataset.tooltip) return;
+    tipTarget = target;
+    tipTimer = setTimeout(() => {
+      if (!target.isConnected) return hideTooltip();
+      tooltip.textContent = target.dataset.tooltip;
+      tooltip.hidden = false;
+      const box = target.getBoundingClientRect();
+      const width = tooltip.offsetWidth, height = tooltip.offsetHeight;
+      tooltip.style.left = Math.max(12, Math.min(box.left, innerWidth - width - 12)) + 'px';
+      tooltip.style.top = Math.max(12, box.bottom + height + 20 < innerHeight ? box.bottom + 8 : box.top - height - 8) + 'px';
+      target.setAttribute('aria-describedby', [target.getAttribute('aria-describedby'), tooltip.id].filter(Boolean).join(' '));
+    }, 250);
+  }
+  function prepareTooltips() {
+    if (tipTarget && !tipTarget.isConnected) hideTooltip();
+    root.querySelectorAll('[title]').forEach((el) => {
+      const text = el.getAttribute('title');
+      el.removeAttribute('title');
+      if (!text) return;
+      el.dataset.tooltip = text;
+      if (el.matches('button,select') && !el.hasAttribute('aria-label')) el.setAttribute('aria-label', text);
+    });
+  }
+  prepareTooltips();
+  new MutationObserver(prepareTooltips).observe(root, {childList: true, subtree: true});
+  root.addEventListener('pointerover', (e) => {
+    if (tooltip.contains(e.target) || e.pointerType === 'touch') return;
+    showTooltip(e.target.closest('[data-tooltip]'));
+  });
+  root.addEventListener('pointerout', (e) => {
+    if (tipTarget?.contains(e.relatedTarget) || tooltip.contains(e.relatedTarget)) return;
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(hideTooltip, 120);
+  });
+  tooltip.addEventListener('pointerenter', () => clearTimeout(tipTimer));
+  root.addEventListener('focusin', (e) => showTooltip(e.target.closest('[data-tooltip]')));
+  root.addEventListener('focusout', hideTooltip);
+  root.addEventListener('click', hideTooltip);
+  root.addEventListener('scroll', (e) => { if (e.target !== tooltip) hideTooltip(); }, true);
+  window.addEventListener('resize', hideTooltip);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTooltip(); });
+
 
   const THEMES = { auto: '◐ auto', light: '☀ light', dark: '☾ dark' };
   function applyTheme(t) {
