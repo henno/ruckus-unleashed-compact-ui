@@ -4,7 +4,7 @@ A Tampermonkey userscript that replaces the Ruckus Unleashed dashboard with a de
 
 ## Features
 
-- **Access points:** status, name, description, model, IP, management VLAN, MAC, client count, uplink speed, uplink errors and drops, traffic, uptime (negative for offline APs), last reboot reason. Sortable columns.
+- **Access points:** status, name, description, model, IP, management VLAN, MAC, client count, uplink speed, uplink errors and drops, traffic, uptime (negative for offline APs), and health remarks. Sortable columns.
 - **Expandable AP details:** network, device, reboot counters, radios per SSID and band (with VLAN), LAN ports, uplink interface, recent events. AP name and description are editable here.
 - **Clients:** name, IP, MAC, device type, SSID, VLAN, AP, band and channel, signal, connected time. Click an AP to show only its clients.
 - **WLANs:** enable/disable toggle, client count, security, VLAN (dynamic VLAN marked). Blocked clients list with unblock.
@@ -27,6 +27,8 @@ Validation: `node --check ruckus-unleashed-compact-ui.user.js` and `node tests/r
 
 ## Install
 
+Available on [Greasy Fork](https://greasyfork.org/en/scripts/602859-ruckus-unleashed-compact-ui). That listing automatically syncs the script from this repository.
+
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
 2. Open the [script file](https://raw.githubusercontent.com/henno/ruckus-unleashed-compact-ui/main/ruckus-unleashed-compact-ui.user.js) and click **Install**.
 3. Log in to your Unleashed controller and open `https://<controller>/admin/dashboard.jsp`.
@@ -41,7 +43,7 @@ The script runs only on pages titled "Unleashed" that expose the CSRF token, so 
 
 ## How it talks to the controller
 
-All requests go from your browser to the controller with your existing login session. Nothing is sent anywhere else. Configuration writes use the same calls as the stock UI; settings changed with `setconf` are sent as complete elements so other attributes are preserved.
+Controller requests go from your browser to the controller with your existing login session. Fonts load from Google Fonts. Preferences and counter baselines are stored in browser local storage. No analytics are included. Configuration writes use the same calls as the stock UI; settings changed with `setconf` are sent as complete elements so other attributes are preserved.
 
 ## License
 
