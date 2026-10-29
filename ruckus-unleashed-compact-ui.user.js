@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ruckus Unleashed Compact UI
 // @namespace    https://github.com/henno/ruckus-unleashed-compact-ui
-// @version      1.14.0
+// @version      1.14.1
 // @description  Dense single-screen table UI for Ruckus Unleashed: APs, clients, WLANs and events at once.
 // @author       Henno Täht
 // @license      MIT
@@ -270,9 +270,9 @@
 
   const css = document.createElement('style');
   css.textContent = `
-  :root{--bg:#f4f5f7;--panel:#fff;--line:#e2e4e8;--txt:#1d2228;--mut:#7a8290;--acc:#e8711c;--ok:#1f9d55;--bad:#d64545;--warn:#d99a00;--info:#2f6fd6;--hov:#fff5ec;--sel:#ffe6cf}
-  @media (prefers-color-scheme:dark){:root:not([data-tg-theme=light]){--bg:#111418;--panel:#181c21;--line:#2a2f37;--txt:#e3e6ea;--mut:#8a93a1;--hov:#24221f;--sel:#3a2a1c}}
-  :root[data-tg-theme=dark]{--bg:#111418;--panel:#181c21;--line:#2a2f37;--txt:#e3e6ea;--mut:#8a93a1;--hov:#24221f;--sel:#3a2a1c}
+  :root{--head-bg:#e2e7ed;--head-txt:#3c4653;--head-section:#e2e7ed;--bg:#f4f5f7;--panel:#fff;--line:#e2e4e8;--txt:#1d2228;--mut:#7a8290;--acc:#e8711c;--ok:#1f9d55;--bad:#d64545;--warn:#d99a00;--info:#2f6fd6;--hov:#fff5ec;--sel:#ffe6cf}
+  @media (prefers-color-scheme:dark){:root:not([data-tg-theme=light]){--head-bg:#181c21;--head-txt:#8a93a1;--head-section:#111418;--bg:#111418;--panel:#181c21;--line:#2a2f37;--txt:#e3e6ea;--mut:#8a93a1;--hov:#24221f;--sel:#3a2a1c}}
+  :root[data-tg-theme=dark]{--head-bg:#181c21;--head-txt:#8a93a1;--head-section:#111418;--bg:#111418;--panel:#181c21;--line:#2a2f37;--txt:#e3e6ea;--mut:#8a93a1;--hov:#24221f;--sel:#3a2a1c}
   #tgU,#tgU *{box-sizing:border-box}
   #tgU{position:fixed;inset:0;z-index:2147483000;background:var(--bg);color:var(--txt);font-size:var(--fz);line-height:1.1;font-family:var(--ff);font-weight:var(--fw);font-stretch:var(--fst);letter-spacing:.02em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-synthesis:none;display:grid;grid-template-rows:auto 1fr;overflow:hidden}
   #tgU header{display:flex;align-items:center;gap:10px;padding:2px 6px;background:var(--panel);border-bottom:2px solid var(--acc);white-space:nowrap}
@@ -297,14 +297,14 @@
   @keyframes pulse{50%{opacity:.35}}
   #tgU main{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);grid-template-rows:minmax(0,1.15fr) minmax(0,1fr);gap:4px;padding:4px;min-height:0}
   #tgU section{background:var(--panel);border:1px solid var(--line);display:flex;flex-direction:column;min-height:0;min-width:0}
-  #tgU section>h2{margin:0;padding:1px 5px;font-size:.92em;font-weight:normal;color:var(--mut);display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.08em}
+  #tgU section>h2{margin:0;padding:1px 5px;font-size:.92em;font-weight:normal;color:var(--head-txt);display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.08em}
   #tgU section>h2 b{color:var(--txt)} #tgU section>h2 .grow{flex:1}
   #tgU section>h2 a{color:var(--acc);cursor:pointer;text-transform:none;letter-spacing:.02em}
   #tgU .scroll{overflow:auto;min-height:0;flex:1}
   #tgU #secAp{grid-row:1/3}
   #tgU #secRight{display:grid;grid-template-rows:auto minmax(0,1fr);gap:4px;background:none;border:0}
   #tgU table{border-collapse:collapse;width:100%}
-  #tgU th{position:sticky;top:0;background:var(--panel);text-align:left;font-weight:normal;color:var(--mut);padding:1px 4px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap;z-index:1}
+  #tgU th{position:sticky;top:0;background:var(--head-bg);text-align:left;font-weight:normal;color:var(--head-txt);padding:1px 4px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap;z-index:1}
   #tgU th.sorted{color:var(--acc)} #tgU th.sorted:after{content:attr(data-dir);font-size:10px;margin-left:2px}
   #tgU td{padding:0 4px;border-bottom:1px solid var(--line);white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis}
   #tgU tr:hover td{background:var(--hov)} #tgU tr.sel td{background:var(--sel)}
@@ -335,14 +335,14 @@
   #tgU tr.det:hover>td{background:var(--bg)}
   #tgU .ins{margin-left:14px;padding:6px 10px 8px;border-left:2px solid var(--acc);display:grid;grid-template-columns:repeat(3,max-content) 1fr;gap:8px 28px;align-items:start}
   #tgU .ins>.full{grid-column:1/-1;display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
-  #tgU .ins h4{margin:0;padding:1px 6px;font-size:1em;font-weight:normal;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;background:var(--bg);border-bottom:1px solid var(--line)}
+  #tgU .ins h4{margin:0;padding:1px 6px;font-size:1em;font-weight:normal;color:var(--head-txt);text-transform:uppercase;letter-spacing:.08em;background:var(--head-section);border-bottom:1px solid var(--line)}
   #tgU .ins>div:not(.full):not(:empty),#tgU .ins>.full>div{background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:0;overflow:hidden}
   #tgU .ins table{width:100%;border-collapse:collapse;border-style:hidden}
   #tgU .ins td,#tgU .ins th{position:static;padding:0 6px;border:1px solid var(--line);background:none;max-width:none;cursor:auto;font-variant-numeric:tabular-nums;line-height:1.3}
-  #tgU .ins th{color:var(--mut);text-align:left}
+  #tgU .ins th{color:var(--head-txt);background:var(--head-bg);text-align:left}
   #tgU .ins .kv td:first-child{color:var(--mut);min-width:64px}
   #tgU .ins .c{text-align:right}
-  #tgU tr.det .ins td,#tgU tr.det .ins th,#tgU tr.det .ins tr:hover td{background:var(--panel)}
+  #tgU tr.det .ins td,#tgU tr.det .ins tr:hover td{background:var(--panel)}
   #tgU .ins .z{color:var(--mut)} #tgU .ins .bad{color:var(--bad)}
   #tgU .ins .ev{grid-column:1/-1} #tgU .ins .ev td{white-space:normal} #tgU .ins .ev td:first-child{white-space:nowrap;color:var(--mut);vertical-align:top}
   #tgU header select,#tgU header input,#tgU header button{width:auto;max-width:none;height:auto;margin:0}
